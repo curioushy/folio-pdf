@@ -81,6 +81,7 @@ async function build() {
   // ── 4. Write output ───────────────────────────────────────────────────────
   const outPath = 'dist/folio.html'
   writeFileSync(outPath, html)
+  writeFileSync('dist/index.html', html)   // Vercel serves this as site root
   const sizeKB = (readFileSync(outPath).length / 1024).toFixed(1)
   console.log(`\n  ✓ Built: ${outPath} (${sizeKB} KB total)\n`)
 }
