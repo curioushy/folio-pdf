@@ -8,7 +8,13 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs'
 import * as esbuild from 'esbuild'
 
-const VERSION = JSON.parse(readFileSync('package.json', 'utf8')).version
+// ── Auto-increment patch version ──────────────────────────────────────────────
+const pkg = JSON.parse(readFileSync('package.json', 'utf8'))
+const [major, minor, patch] = pkg.version.split('.').map(Number)
+pkg.version = `${major}.${minor}.${patch + 1}`
+writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n')
+
+const VERSION = pkg.version
 
 async function build() {
   console.log(`\nBuilding Folio v${VERSION}...\n`)
