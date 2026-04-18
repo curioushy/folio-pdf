@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Folio PDF</title>
+
+  <!-- STYLES:START -->
+  <link rel="stylesheet" href="./styles/base.css">
+  <link rel="stylesheet" href="./styles/components.css">
+  <!-- STYLES:END -->
+</head>
+<body>
+
+  <div class="app">
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <span class="sidebar-logo">Folio <span style="font-weight:400;opacity:.7;">PDF</span></span>
+        <span class="sidebar-version">v{{VERSION}}</span>
+      </div>
+
+      <!-- Global file slot -->
+      <div id="sidebar-file-slot"></div>
+
+      <nav id="feature-nav" class="feature-nav"></nav>
+
+      <div class="sidebar-footer">
+        <span class="sidebar-tagline">Exploratory Project</span>
+        <span class="sidebar-author">by Curious HY</span>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <div class="main-area">
+      <main class="feature-panel" id="feature-content">
+        <div class="welcome">
+          <div class="welcome-icon">⬡</div>
+          <h1>Folio <span style="font-weight:400;opacity:.45;">PDF</span></h1>
+          <p class="welcome-tagline">An Exploratory Project by Curious HY</p>
+          <p>Open a PDF using the sidebar, then pick a tool.</p>
+        </div>
+      </main>
+    </div>
+
+  </div>
+
+  <!-- Modal overlay -->
+  <div id="modal-overlay" class="modal-overlay" role="dialog" aria-modal="true">
+    <div class="modal">
+      <h3 id="modal-title" class="modal-title"></h3>
+      <div id="modal-content" class="modal-body"></div>
+      <div id="modal-actions" class="modal-actions"></div>
+    </div>
+  </div>
+
+  <!-- Progress overlay -->
+  <div id="progress-overlay" class="progress-overlay">
+    <div class="progress-box">
+      <div class="spinner"></div>
+      <div id="progress-message" class="progress-message">Processing…</div>
+    </div>
+  </div>
+
+  <!-- Toast container -->
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+  <!-- APP:START -->
+  <script type="module" src="./core/app.js"></script>
+  <!-- APP:END -->
+
+</body>
+</html>
