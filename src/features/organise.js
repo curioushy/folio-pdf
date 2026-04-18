@@ -53,8 +53,8 @@ registerFeature({
       <div class="feature-header">
         <h2>Organise Pages</h2>
         <p class="feature-desc">
-          Drag thumbnails to reorder · click to select · use the toolbar to rotate,
-          duplicate, delete, insert blanks or pull in pages from another PDF.
+          Drag thumbnails to reorder (selected pages move together) · click to select ·
+          double-click to preview · use the toolbar to rotate, duplicate, delete, insert blanks or pull in pages from another PDF.
         </p>
       </div>
 
@@ -104,6 +104,24 @@ registerFeature({
 
       <!-- ── Page grid ──────────────────────────────────────────────────────── -->
       <div id="org-grid" class="org-grid"></div>
+
+      <!-- ── Page preview lightbox ─────────────────────────────────────────── -->
+      <div id="org-preview-modal" tabindex="-1" style="
+        display:none; position:fixed; inset:0;
+        background:rgba(15,23,42,.82); z-index:200;
+        align-items:center; justify-content:center;
+        backdrop-filter:blur(4px);
+      ">
+        <div style="display:flex;flex-direction:column;align-items:center;gap:12px;max-width:92vw;max-height:92vh;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <button id="org-preview-prev" class="btn btn-sm" style="background:rgba(255,255,255,.15);color:#f1f5f9;border-color:rgba(255,255,255,.25);">← Prev</button>
+            <span id="org-preview-label" style="color:#f1f5f9;font-size:13px;min-width:110px;text-align:center;"></span>
+            <button id="org-preview-next" class="btn btn-sm" style="background:rgba(255,255,255,.15);color:#f1f5f9;border-color:rgba(255,255,255,.25);">Next →</button>
+            <button id="org-preview-close" class="btn btn-sm" style="background:rgba(220,38,38,.65);color:#fff;border-color:transparent;margin-left:10px;">✕ Close</button>
+          </div>
+          <div id="org-preview-content" style="overflow:auto;display:flex;align-items:center;justify-content:center;flex:1;min-height:0;"></div>
+        </div>
+      </div>
 
       <!-- ── Import-from-PDF modal ─────────────────────────────────────────── -->
       <div id="org-import-modal" style="
@@ -312,9 +330,16 @@ registerFeature({
         cell.appendChild(label)
         gridEl.appendChild(cell)
 
-        // Drag to reorder
+        // Drag to reorder (drags the entire current selection)
         cell.addEventListener('dragstart', e => {
           dragSrcIdx = i
+          // If dragging a page that isn't selected, snap selection to just this page
+          if (!sel.has(slot.id)) {
+            sel.clear()
+            sel.add(slot.id)
+            syncSelectionHighlights()
+            updateSelCount()
+          }
           cell.classList.add('dragging')
           e.dataTransfer.effectAllowed = 'move'
         })
@@ -329,13 +354,32 @@ registerFeature({
         cell.addEventListener('drop', e => {
           e.preventDefault()
           cell.classList.remove('drop-target')
-          if (dragSrcIdx === null || dragSrcIdx === i) return
-          const [moved] = slots.splice(dragSrcIdx, 1)
-          slots.splice(i, 0, moved)
+          const savedDragSrc = dragSrcIdx
           dragSrcIdx = null
+          if (savedDragSrc === null) return
+
+          // Dropping onto a selected cell is a no-op (it's part of the moving group)
+          if (sel.has(slot.id)) return
+
+          const selIdxs = selectedIndices()   // sorted ascending
+          if (!selIdxs.length) return
+
+          // Collect the moving slots and count how many are before the drop target
+          const selIds     = new Set(selIdxs.map(idx => slots[idx].id))
+          const moving     = selIdxs.map(idx => slots[idx])
+          const beforeCount = selIdxs.filter(idx => idx < i).length
+          const insertAt   = i - beforeCount
+
+          const rest = slots.filter(s => !selIds.has(s.id))
+          rest.splice(insertAt, 0, ...moving)
+          slots = rest
+
           renderGrid()
           updateSaveHint()
         })
+
+        // Double-click → preview lightbox
+        cell.addEventListener('dblclick', () => openPreview(i))
 
         // Click to select
         cell.addEventListener('click', e => {
@@ -503,6 +547,87 @@ registerFeature({
       renderGrid()
       updateSelCount()
       updateSaveHint()
+    })
+
+    // ── Page preview lightbox ────────────────────────────────────────────────
+    let previewSlotI = -1
+
+    function openPreview(slotI) {
+      previewSlotI = slotI
+      renderPreview()
+      const modal = container.querySelector('#org-preview-modal')
+      modal.style.display = 'flex'
+      modal.focus()
+    }
+
+    function closePreview() {
+      container.querySelector('#org-preview-modal').style.display = 'none'
+    }
+
+    async function renderPreview() {
+      const wrap  = container.querySelector('#org-preview-content')
+      const label = container.querySelector('#org-preview-label')
+      const slot  = slots[previewSlotI]
+      if (!slot) return
+
+      label.textContent = `Page ${previewSlotI + 1} of ${slots.length}`
+      wrap.innerHTML = '<div style="color:#94a3b8;padding:32px 48px;font-size:13px;">Rendering…</div>'
+
+      const src = sources[slot.srcIdx]
+      if (!src?.renderDoc) {
+        wrap.innerHTML = '<div style="color:#fca5a5;padding:32px;">No preview available.</div>'
+        return
+      }
+
+      try {
+        const page     = await src.renderDoc.getPage(slot.origIdx + 1)
+        const vpNative = page.getViewport({ scale: 1 })
+        const totalRot = (vpNative.rotation + slot.extraRotation) % 360
+        const vpUnit   = page.getViewport({ scale: 1, rotation: totalRot })
+
+        // Fit inside 88% of viewport, cap at 800×900 px
+        const maxW   = Math.min(800, window.innerWidth  * 0.88)
+        const maxH   = Math.min(900, window.innerHeight * 0.80)
+        const scale  = Math.min(maxW / vpUnit.width, maxH / vpUnit.height)
+
+        const vpFinal = page.getViewport({ scale, rotation: totalRot })
+        const dpr     = Math.min(window.devicePixelRatio || 1, 2)
+        const canvas  = document.createElement('canvas')
+        canvas.width  = Math.round(vpFinal.width  * dpr)
+        canvas.height = Math.round(vpFinal.height * dpr)
+        canvas.style.cssText = `display:block;width:${Math.round(vpFinal.width)}px;height:${Math.round(vpFinal.height)}px;border-radius:4px;box-shadow:0 8px 40px rgba(0,0,0,.65);background:#fff;`
+
+        await page.render({
+          canvasContext: canvas.getContext('2d'),
+          viewport:      page.getViewport({ scale: scale * dpr, rotation: totalRot }),
+        }).promise
+        page.cleanup()
+
+        wrap.innerHTML = ''
+        wrap.appendChild(canvas)
+
+        // Update prev/next button states
+        container.querySelector('#org-preview-prev').disabled = previewSlotI <= 0
+        container.querySelector('#org-preview-next').disabled = previewSlotI >= slots.length - 1
+      } catch (err) {
+        wrap.innerHTML = `<div style="color:#fca5a5;padding:32px;">Render failed: ${err.message}</div>`
+      }
+    }
+
+    container.querySelector('#org-preview-close').addEventListener('click', closePreview)
+    container.querySelector('#org-preview-modal').addEventListener('click', e => {
+      if (e.target === e.currentTarget) closePreview()
+    })
+    container.querySelector('#org-preview-prev').addEventListener('click', () => {
+      if (previewSlotI > 0) { previewSlotI--; renderPreview() }
+    })
+    container.querySelector('#org-preview-next').addEventListener('click', () => {
+      if (previewSlotI < slots.length - 1) { previewSlotI++; renderPreview() }
+    })
+    container.querySelector('#org-preview-modal').addEventListener('keydown', e => {
+      if (e.key === 'Escape')     { e.stopPropagation(); closePreview() }
+      if (e.key === 'ArrowLeft'  && previewSlotI > 0)               { e.preventDefault(); previewSlotI--; renderPreview() }
+      if (e.key === 'ArrowRight' && previewSlotI < slots.length - 1) { e.preventDefault(); previewSlotI++; renderPreview() }
     })
 
     // ── Import from PDF ───────────────────────────────────────────────────────

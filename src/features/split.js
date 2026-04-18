@@ -95,7 +95,7 @@ registerFeature({
           <!-- ── Extract ── -->
           <div id="tab-extract" class="tab-content">
             <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">
-              Click thumbnails to select pages, or type a range below.
+              Click to toggle · Shift-click for a range · Ctrl/⌘-click to toggle individually · or type a range below.
             </p>
             <div class="option-row">
               <label>Pages <small>(1-based)</small></label>
@@ -215,7 +215,8 @@ registerFeature({
     let thumbObserver = null
     let setThumbSelected = null
 
-    const selectedPages = new Set()
+    const selectedPages  = new Set()
+    let lastClickedPage0 = null     // for shift-click range select
 
     // Bookmarks state
     let bkmItems       = []    // [{title, pageStart, pageEnd, checked}]
@@ -296,20 +297,32 @@ registerFeature({
 
         const grid = container.querySelector('#split-thumb-grid')
         selectedPages.clear()
+        lastClickedPage0 = null
 
         const { observer, setSelected } = buildThumbnailGrid(
           renderDoc, total, grid,
           {
             thumbWidth: 130,
-            onPageClick: (page0, el) => {
+            onPageClick: (page0, el, e) => {
               if (activeTab !== 'extract') return
-              if (selectedPages.has(page0)) {
-                selectedPages.delete(page0)
-                el.classList.remove('selected')
+
+              if (e.shiftKey && lastClickedPage0 !== null) {
+                // Range select — add everything between last click and here
+                const lo = Math.min(page0, lastClickedPage0)
+                const hi = Math.max(page0, lastClickedPage0)
+                for (let p = lo; p <= hi; p++) selectedPages.add(p)
+                // don't update lastClickedPage0 so chained shifts keep extending from anchor
+              } else if (e.ctrlKey || e.metaKey) {
+                // Toggle individual
+                selectedPages.has(page0) ? selectedPages.delete(page0) : selectedPages.add(page0)
+                lastClickedPage0 = page0
               } else {
-                selectedPages.add(page0)
-                el.classList.add('selected')
+                // Plain click: toggle this page
+                selectedPages.has(page0) ? selectedPages.delete(page0) : selectedPages.add(page0)
+                lastClickedPage0 = page0
               }
+
+              setThumbSelected?.(selectedPages)
               syncSelectionUI()
             },
           }
@@ -384,8 +397,9 @@ registerFeature({
       sourceDoc     = null
       sourceBytes   = null
       bookmarksReady = false
-      blankScanned   = false
+      blankScanned     = false
       selectedPages.clear()
+      lastClickedPage0 = null
       pageCountEl.textContent = ''
       container.querySelector('#split-thumb-section').style.display = 'none'
       container.querySelector('#split-before-load').style.display   = 'block'

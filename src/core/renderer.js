@@ -208,7 +208,7 @@ export function buildThumbnailGrid(pdfDoc, totalPages, container, {
     thumb.appendChild(label)
 
     if (onPageClick) {
-      thumb.addEventListener('click', () => onPageClick(p - 1, thumb))
+      thumb.addEventListener('click', e => onPageClick(p - 1, thumb, e))
     }
 
     container.appendChild(thumb)
