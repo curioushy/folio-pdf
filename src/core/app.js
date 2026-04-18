@@ -13,6 +13,7 @@ import { toast, showProgress, hideProgress, promptPassword } from './ui.js'
 import { load as pdfLoad }                       from './pdf.js'
 import { loadForRender, renderPage }             from './renderer.js'
 import { getFeatures, getFeature }               from './registry.js'
+import * as pdfjsLib                             from 'pdfjs-dist'
 
 // Trigger feature self-registration (side-effects only)
 import '../features/index.js'
@@ -22,9 +23,10 @@ import '../features/index.js'
 let viewerRenderDoc  = null   // PDF.js PDFDocumentProxy for the current file
 let viewerSourceFile = null   // File object — identity check to detect file swaps
 let viewerPage       = 1
-let viewerMode       = 'single'   // 'single' | 'thumbs'
+let viewerMode       = 'single'   // 'single' | 'twopage' | 'thumbs'
 let viewerZoom       = 100        // percent; 100 = fit width
 let viewerAbort      = null       // AbortController for keyboard / scroll listeners
+let viewerPresenting = false      // presentation (kiosk) mode active
 
 const ZOOM_STEPS = [25, 33, 50, 67, 75, 100, 125, 150, 200, 300, 400]
 
@@ -124,8 +126,10 @@ export function showViewer() {
       <button class="viewer-btn" id="viewer-zoom-in"  title="Zoom in">+</button>
     </div>
     <div class="viewer-mode-btns">
-      <button class="viewer-mode-btn${viewerMode === 'single' ? ' active' : ''}" id="viewer-single">Page</button>
-      <button class="viewer-mode-btn${viewerMode === 'thumbs'  ? ' active' : ''}" id="viewer-thumbs">Thumbnails</button>
+      <button class="viewer-mode-btn${viewerMode === 'single'  ? ' active' : ''}" id="viewer-single">Page</button>
+      <button class="viewer-mode-btn${viewerMode === 'twopage' ? ' active' : ''}" id="viewer-twopage">2-up</button>
+      <button class="viewer-mode-btn${viewerMode === 'thumbs'  ? ' active' : ''}" id="viewer-thumbs">Thumbs</button>
+      <button class="viewer-btn" id="viewer-present" title="Presentation mode — click or arrow keys to advance, Esc to exit">▶</button>
       <button class="viewer-btn viewer-fs-btn" id="viewer-fs" title="Fullscreen">⛶</button>
     </div>
   `
@@ -141,14 +145,16 @@ export function showViewer() {
   const nextBtn    = bar.querySelector('#viewer-next')
   const pgSpan     = bar.querySelector('#viewer-pg')
   const singleBtn  = bar.querySelector('#viewer-single')
+  const twopageBtn = bar.querySelector('#viewer-twopage')
   const thumbsBtn  = bar.querySelector('#viewer-thumbs')
+  const presentBtn = bar.querySelector('#viewer-present')
   const zoomOutBtn = bar.querySelector('#viewer-zoom-out')
   const zoomInBtn  = bar.querySelector('#viewer-zoom-in')
   const zoomInput  = bar.querySelector('#viewer-zoom-val')
   const fsBtn      = bar.querySelector('#viewer-fs')
 
   function updateNavVis() {
-    const hidden = viewerMode !== 'single'
+    const hidden = viewerMode === 'thumbs'
     bar.querySelector('#viewer-nav-group').style.visibility  = hidden ? 'hidden' : ''
     bar.querySelector('.viewer-zoom-group').style.visibility = hidden ? 'hidden' : ''
   }
@@ -158,7 +164,9 @@ export function showViewer() {
     pgSpan.textContent = viewerPage
     prevBtn.disabled = viewerPage <= 1
     nextBtn.disabled = viewerPage >= cf.pageCount
-    if (viewerMode === 'single') renderSingle()
+    if (viewerMode === 'single')  renderSingle()
+    if (viewerMode === 'twopage') renderTwoUp()
+    updatePresOverlay()
   }
 
   prevBtn.addEventListener('click', () => setPage(viewerPage - 1))
@@ -170,7 +178,8 @@ export function showViewer() {
   function applyZoom(z) {
     viewerZoom = Math.max(25, Math.min(400, Math.round(z)))
     zoomInput.value = viewerZoom + '%'
-    if (viewerMode === 'single') renderSingle()
+    if (viewerMode === 'single')  renderSingle()
+    if (viewerMode === 'twopage') renderTwoUp()
   }
 
   zoomOutBtn.addEventListener('click', () => {
@@ -190,23 +199,21 @@ export function showViewer() {
     if (e.key === 'Enter') { e.target.blur() }
   })
 
-  singleBtn.addEventListener('click', () => {
-    viewerMode = 'single'
-    singleBtn.classList.add('active')
-    thumbsBtn.classList.remove('active')
+  function setMode(mode) {
+    viewerMode = mode
+    singleBtn.classList.toggle('active',  mode === 'single')
+    twopageBtn.classList.toggle('active', mode === 'twopage')
+    thumbsBtn.classList.toggle('active',  mode === 'thumbs')
     updateNavVis()
     content.innerHTML = ''
-    renderSingle()
-  })
+    if (mode === 'single')  renderSingle()
+    if (mode === 'twopage') renderTwoUp()
+    if (mode === 'thumbs')  renderThumbs()
+  }
 
-  thumbsBtn.addEventListener('click', () => {
-    viewerMode = 'thumbs'
-    thumbsBtn.classList.add('active')
-    singleBtn.classList.remove('active')
-    updateNavVis()
-    content.innerHTML = ''
-    renderThumbs()
-  })
+  singleBtn.addEventListener('click',  () => setMode('single'))
+  twopageBtn.addEventListener('click', () => setMode('twopage'))
+  thumbsBtn.addEventListener('click',  () => setMode('thumbs'))
 
   updateNavVis()
 
@@ -229,19 +236,65 @@ export function showViewer() {
 
   document.addEventListener('fullscreenchange', () => {
     updateFsBtn()
-    // Re-render at new container width after fullscreen transition settles
-    if (viewerMode === 'single') setTimeout(renderSingle, 80)
+    if (!document.fullscreenElement && viewerPresenting) stopPresentation()
+    if (viewerMode === 'single')  setTimeout(renderSingle, 80)
+    if (viewerMode === 'twopage') setTimeout(renderTwoUp,  80)
   }, { signal: viewerAbort.signal })
 
   updateFsBtn()
+
+  // ── Presentation (kiosk) mode ─────────────────────────────────────────
+  function updatePresOverlay() {
+    const overlay = content.querySelector('.pres-overlay')
+    if (!overlay) return
+    overlay.querySelector('.pres-counter').textContent =
+      `${viewerPage} / ${cf.pageCount}  ·  Esc to exit`
+  }
+
+  function startPresentation() {
+    if (viewerMode !== 'single' && viewerMode !== 'twopage') setMode('single')
+    viewerPresenting = true
+    presentBtn.classList.add('active')
+    container.classList.add('viewer-presenting')
+    mainArea.requestFullscreen().catch(() => {})
+    // Inject click-to-advance overlay into content
+    const overlay = document.createElement('div')
+    overlay.className = 'pres-overlay'
+    overlay.innerHTML = `<span class="pres-counter"></span>`
+    overlay.addEventListener('click', () => {
+      const step = viewerMode === 'twopage' ? 2 : 1
+      if (viewerPage + step - 1 < cf.pageCount) setPage(viewerPage + step)
+    })
+    content.appendChild(overlay)
+    updatePresOverlay()
+  }
+
+  function stopPresentation() {
+    viewerPresenting = false
+    presentBtn.classList.remove('active')
+    container.classList.remove('viewer-presenting')
+    content.querySelector('.pres-overlay')?.remove()
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
+  }
+
+  presentBtn.addEventListener('click', () => {
+    if (viewerPresenting) stopPresentation()
+    else startPresentation()
+  })
 
   // ── Keyboard navigation ────────────────────────────────────────────────
   document.addEventListener('keydown', e => {
     const tag = document.activeElement?.tagName ?? ''
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+    if (e.key === 'Escape' && viewerPresenting) { e.preventDefault(); stopPresentation(); return }
     if (viewerMode === 'single') {
       if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setPage(viewerPage + 1) }
       if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')   { e.preventDefault(); setPage(viewerPage - 1) }
+      if (e.key === '+' || e.key === '=') { e.preventDefault(); zoomInBtn.click() }
+      if (e.key === '-')                  { e.preventDefault(); zoomOutBtn.click() }
+    } else if (viewerMode === 'twopage') {
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setPage(viewerPage + 2) }
+      if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')   { e.preventDefault(); setPage(viewerPage - 2) }
       if (e.key === '+' || e.key === '=') { e.preventDefault(); zoomInBtn.click() }
       if (e.key === '-')                  { e.preventDefault(); zoomOutBtn.click() }
     } else if (viewerMode === 'thumbs') {
@@ -335,6 +388,87 @@ export function showViewer() {
     wrap.style.cssText = 'padding:20px 24px 32px;display:flex;justify-content:center;'
     wrap.appendChild(pageWrap)
     content.appendChild(wrap)
+  }
+
+  // ── Two-page renderer ───────────────────────────────────────────────────
+  async function renderTwoUp() {
+    const token = ++renderToken
+    content.innerHTML = '<div class="viewer-loading">Rendering…</div>'
+
+    const doc = await ensureViewerDoc(cf)
+    if (token !== renderToken) return
+    if (!doc) {
+      content.innerHTML = '<div class="viewer-loading viewer-error">Failed to render PDF.</div>'
+      return
+    }
+
+    const dpr    = Math.min(window.devicePixelRatio || 1, 3)
+    const availW = Math.max(content.clientWidth - 64, 400)
+    const halfW  = Math.floor((availW - 20) / 2)  // 20px gap between pages
+
+    // Render up to 2 pages (left = viewerPage, right = viewerPage+1)
+    const pageNums = [viewerPage]
+    if (viewerPage + 1 <= cf.pageCount) pageNums.push(viewerPage + 1)
+
+    content.innerHTML = ''
+    const outerWrap = document.createElement('div')
+    outerWrap.style.cssText = 'padding:20px 24px 32px;display:flex;gap:20px;justify-content:center;align-items:flex-start;'
+
+    for (const pgNum of pageNums) {
+      if (token !== renderToken) return
+      let page
+      try { page = await doc.getPage(pgNum) } catch { continue }
+      if (token !== renderToken) { page.cleanup(); return }
+
+      const viewport     = page.getViewport({ scale: 1 })
+      const fitScale     = (halfW * (viewerZoom / 100)) / viewport.width
+      const displayVP    = page.getViewport({ scale: fitScale })
+      const renderVP     = page.getViewport({ scale: fitScale * dpr })
+      const cssW         = Math.round(displayVP.width)
+      const cssH         = Math.round(displayVP.height)
+
+      const canvas       = document.createElement('canvas')
+      canvas.width       = Math.round(renderVP.width)
+      canvas.height      = Math.round(renderVP.height)
+      canvas.style.cssText = `display:block;width:100%;height:100%;`
+
+      const [, textContent] = await Promise.all([
+        page.render({ canvasContext: canvas.getContext('2d'), viewport: renderVP }).promise,
+        page.getTextContent().catch(() => null),
+      ])
+      page.cleanup()
+      if (token !== renderToken) return
+
+      const pageWrap = document.createElement('div')
+      pageWrap.style.cssText = `position:relative;width:${cssW}px;height:${cssH}px;box-shadow:var(--shadow-lg);border-radius:2px;flex-shrink:0;background:#fff;`
+      pageWrap.appendChild(canvas)
+
+      // Text layer
+      if (textContent && pdfjsLib.TextLayer) {
+        const textLayer = document.createElement('div')
+        textLayer.className = 'textLayer'
+        textLayer.style.setProperty('--total-scale-factor', String(fitScale))
+        try {
+          const tl = new pdfjsLib.TextLayer({ textContentSource: textContent, container: textLayer, viewport: displayVP })
+          await tl.render()
+          pageWrap.appendChild(textLayer)
+        } catch {}
+      }
+
+      const lbl = document.createElement('div')
+      lbl.style.cssText = 'text-align:center;font-size:11px;color:var(--text-muted);margin-top:5px;'
+      lbl.textContent = String(pgNum)
+
+      const col = document.createElement('div')
+      col.style.cssText = 'display:flex;flex-direction:column;align-items:center;'
+      col.appendChild(pageWrap)
+      col.appendChild(lbl)
+      outerWrap.appendChild(col)
+    }
+
+    if (token !== renderToken) return
+    content.appendChild(outerWrap)
+    if (viewerPresenting) updatePresOverlay()
   }
 
   // ── Thumbnail-grid renderer ──────────────────────────────────────────────
@@ -445,8 +579,9 @@ export function showViewer() {
   }
 
   // ── Initial render ───────────────────────────────────────────────────────
-  if (viewerMode === 'single') renderSingle()
-  else renderThumbs()
+  if      (viewerMode === 'single')  renderSingle()
+  else if (viewerMode === 'twopage') renderTwoUp()
+  else                               renderThumbs()
 }
 
 /** Load (or reuse) the PDF.js document for `cf`. */

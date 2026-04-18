@@ -701,6 +701,32 @@ small { font-size: 12px; color: var(--text-muted); }
 .textLayer ::selection      { background: rgba(59,130,246,.3); color: transparent; }
 .textLayer ::-moz-selection { background: rgba(59,130,246,.3); color: transparent; }
 
+/* ── Presentation (kiosk) mode ───────────────────────────────────────────── */
+.viewer-presenting .viewer-bar {
+  display: none !important;
+}
+.viewer-presenting .viewer-content {
+  height: 100vh;
+  background: #000;
+}
+.pres-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  cursor: pointer;
+  /* click-to-advance; page content sits behind this */
+}
+.pres-counter {
+  position: absolute;
+  bottom: 18px;
+  right: 22px;
+  color: rgba(255,255,255,.45);
+  font-size: 12px;
+  font-family: var(--font);
+  pointer-events: none;
+  user-select: none;
+}
+
 /* ── Scrollbar styling ────────────────────────────────────────────────────── */
 ::-webkit-scrollbar       { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }

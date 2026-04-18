@@ -14,6 +14,7 @@ import './split.js'
 import './crop.js'
 import './n-up.js'
 import './poster.js'
+import './page-labels.js'
 
 // ── Stamp ──────────────────────────────────────────────────────────────────
 // Bates numbering is now the "#Bates" tab inside watermark.js
@@ -32,6 +33,7 @@ import './extract-text.js'
 import './extract-images.js'
 import './fill-forms.js'
 import './table-csv.js'
+import './extract-annotations.js'
 
 // ── Convert ────────────────────────────────────────────────────────────────
 import './compress.js'
@@ -40,11 +42,14 @@ import './pdf-to-images.js'
 import './repair.js'
 import './normalise-pages.js'
 import './strip-elements.js'
+import './grayscale.js'
 
 // ── Tools ──────────────────────────────────────────────────────────────────
 import './bookmarks.js'
 import './dark-reader.js'
 import './metadata.js'
+import './doc-stats.js'
+import './search.js'
 
 // ── Multi-file ─────────────────────────────────────────────────────────────
 import './merge.js'

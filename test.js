@@ -19,12 +19,12 @@ import { execSync }                 from 'child_process'
 // ── Expected nav layout ────────────────────────────────────────────────────
 
 const LAYOUT = {
-  'Pages':       ['organise', 'split', 'crop', 'n-up', 'poster'],
+  'Pages':       ['organise', 'split', 'crop', 'n-up', 'poster', 'page-labels'],
   'Stamp':       ['watermark', 'header-footer'],
   'Protect':     ['password', 'unlock', 'sign', 'redact'],
-  'Extract':     ['extract-text', 'extract-images', 'fill-forms', 'table-csv'],
-  'Convert':     ['compress', 'flatten', 'pdf-to-images', 'repair', 'normalise-pages', 'strip-elements'],
-  'Tools':       ['bookmarks', 'dark-reader', 'metadata'],
+  'Extract':     ['extract-text', 'extract-images', 'fill-forms', 'table-csv', 'extract-annotations'],
+  'Convert':     ['compress', 'flatten', 'pdf-to-images', 'repair', 'normalise-pages', 'strip-elements', 'grayscale'],
+  'Tools':       ['bookmarks', 'dark-reader', 'metadata', 'search', 'doc-stats'],
   'Multi-file':  ['merge', 'overlay', 'images-to-pdf', 'pdf-compare', 'batch'],
 }
 
