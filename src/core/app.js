@@ -302,16 +302,20 @@ export function showViewer() {
     ])
     if (token !== renderToken) { page.cleanup(); return }
 
-    // Text layer — invisible spans positioned over glyphs, enabling select + copy
+    // Text layer — invisible spans positioned over glyphs, enabling select + copy.
+    // PDF.js v5 uses a TextLayer class; the container must have --total-scale-factor set
+    // so the internal setLayerDimensions() CSS calc() resolves to the correct pixel size.
     const textLayer = document.createElement('div')
-    textLayer.className = 'viewer-text-layer'
-    if (textContent && pdfjsLib.renderTextLayer) {
+    textLayer.className = 'textLayer'
+    textLayer.style.setProperty('--total-scale-factor', String(displayScale))
+    if (textContent && pdfjsLib.TextLayer) {
       try {
-        await pdfjsLib.renderTextLayer({
+        const tl = new pdfjsLib.TextLayer({
           textContentSource: textContent,
           container:         textLayer,
           viewport:          displayVP,
-        }).promise
+        })
+        await tl.render()
       } catch { /* scanned/image PDFs have no text — silently skip */ }
     }
 
