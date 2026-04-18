@@ -16,11 +16,21 @@ import { PDFDocument } from '@cantoo/pdf-lib'
 // esbuild replaces this with the real string at build time; in dev it stays undefined.
 /* global __PDFJS_WORKER_SRC__ */
 
+// Shared PDFWorker instance — created once, reused for every getDocument() call.
+let _pdfWorker = null
+
 function setupWorker() {
   if (typeof __PDFJS_WORKER_SRC__ === 'string') {
-    // Production: inline blob URL — works fully offline
-    const blob = new Blob([__PDFJS_WORKER_SRC__], { type: 'application/javascript' })
-    pdfjsLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(blob)
+    // Production: pdf.worker.min.mjs is an ES module (ends with export{}).
+    // PDF.js v5 checks same-origin before creating the Worker; blob: URLs always
+    // have a null origin so it wraps them in a CDN shim — which itself needs the
+    // blob to be a proper ES module. The simplest cross-browser fix is to create
+    // the Worker ourselves with { type:'module' } and hand it to PDFWorker({port}),
+    // bypassing workerSrc / CDN-wrapper entirely.
+    const blob   = new Blob([__PDFJS_WORKER_SRC__], { type: 'text/javascript' })
+    const url    = URL.createObjectURL(blob)
+    const worker = new Worker(url, { type: 'module' })
+    _pdfWorker   = new pdfjsLib.PDFWorker({ port: worker })
   } else {
     // Dev (Vite): resolve from node_modules via import.meta.url
     pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -53,6 +63,7 @@ setupWorker()
 export async function loadForRender(bytes, password = null) {
   const opts = { data: new Uint8Array(bytes) }
   if (password) opts.password = password
+  if (_pdfWorker) opts.worker = _pdfWorker   // use our pre-created module worker
   try {
     return await pdfjsLib.getDocument(opts).promise
   } catch (err) {

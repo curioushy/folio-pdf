@@ -22,13 +22,7 @@ async function build() {
   if (!existsSync('dist')) mkdirSync('dist')
 
   // ── 1. Read PDF.js worker source (inlined so dist file works fully offline) ─
-  // The .mjs worker ends with `export{WorkerMessageHandler}` for ES-module usage,
-  // but when we inline it as a blob URL PDF.js loads it as a classic worker script.
-  // Firefox strictly rejects `export` in classic scripts; Chrome is lenient.
-  // Stripping the export is safe — the worker already sets globalThis.pdfjsWorker
-  // which is how PDF.js communicates with it in classic-script mode.
   const workerSrc = readFileSync('node_modules/pdfjs-dist/build/pdf.worker.min.mjs', 'utf8')
-    .replace(/;export\{[^}]+\};\s*$/, ';')
   console.log(`  PDF.js worker: ${(workerSrc.length / 1024).toFixed(1)} KB`)
 
   // ── 2. Bundle JS via esbuild ──────────────────────────────────────────────
