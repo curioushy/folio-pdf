@@ -653,6 +653,30 @@ small { font-size: 12px; color: var(--text-muted); }
   margin-left: auto;
 }
 
+/* ── Viewer text layer (text selection over canvas) ─────────────────────── */
+.viewer-text-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  line-height: 1;
+  text-size-adjust: none;
+  -webkit-text-size-adjust: none;
+  pointer-events: none; /* let clicks through by default */
+}
+.viewer-text-layer span,
+.viewer-text-layer br {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  pointer-events: all;
+}
+.viewer-text-layer ::selection {
+  background: rgba(59, 130, 246, 0.3);
+  color: transparent;
+}
+
 /* ── Scrollbar styling ────────────────────────────────────────────────────── */
 ::-webkit-scrollbar       { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }

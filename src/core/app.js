@@ -278,26 +278,58 @@ export function showViewer() {
     catch { content.innerHTML = '<div class="viewer-loading viewer-error">Page unavailable.</div>'; return }
     if (token !== renderToken) { page.cleanup(); return }
 
-    const viewport  = page.getViewport({ scale: 1 })
-    const availW    = Math.max(content.clientWidth - 48, 300)
-    const fitScale  = availW / viewport.width
-    const scale     = fitScale * (viewerZoom / 100)
-    const scaled    = page.getViewport({ scale })
+    const viewport     = page.getViewport({ scale: 1 })
+    const availW       = Math.max(content.clientWidth - 48, 300)
+    const fitScale     = availW / viewport.width
+    const displayScale = fitScale * (viewerZoom / 100)
 
-    const canvas    = document.createElement('canvas')
-    canvas.width    = Math.round(scaled.width)
-    canvas.height   = Math.round(scaled.height)
-    // When zoomed > 100% the canvas can exceed container width — allow horizontal scroll
-    canvas.style.cssText = `display:block;${viewerZoom <= 100 ? 'max-width:100%;' : ''}margin:0 auto;box-shadow:var(--shadow-lg);border-radius:2px;background:#fff;`
+    // Render canvas at device pixel ratio for sharp display on HiDPI/retina screens
+    const dpr       = Math.min(window.devicePixelRatio || 1, 3)
+    const renderVP  = page.getViewport({ scale: displayScale * dpr })
+    const displayVP = page.getViewport({ scale: displayScale })
+    const cssW      = Math.round(displayVP.width)
+    const cssH      = Math.round(displayVP.height)
 
-    await page.render({ canvasContext: canvas.getContext('2d'), viewport: scaled }).promise
+    const canvas   = document.createElement('canvas')
+    canvas.width   = Math.round(renderVP.width)
+    canvas.height  = Math.round(renderVP.height)
+    canvas.style.cssText = `display:block;width:${cssW}px;height:${cssH}px;box-shadow:var(--shadow-lg);border-radius:2px;background:#fff;`
+
+    // Render canvas + fetch text content in parallel
+    const [, textContent] = await Promise.all([
+      page.render({ canvasContext: canvas.getContext('2d'), viewport: renderVP }).promise,
+      page.getTextContent().catch(() => null),
+    ])
+    if (token !== renderToken) { page.cleanup(); return }
+
+    // Text layer — invisible spans positioned over glyphs, enabling select + copy
+    const textLayer = document.createElement('div')
+    textLayer.className = 'viewer-text-layer'
+    if (textContent && pdfjsLib.renderTextLayer) {
+      try {
+        await pdfjsLib.renderTextLayer({
+          textContentSource: textContent,
+          container:         textLayer,
+          viewport:          displayVP,
+        }).promise
+      } catch { /* scanned/image PDFs have no text — silently skip */ }
+    }
+
     page.cleanup()
     if (token !== renderToken) return
 
     content.innerHTML = ''
+    const pageWrap = document.createElement('div')
+    pageWrap.style.cssText = `position:relative;width:${cssW}px;height:${cssH}px;margin:0 auto;box-shadow:var(--shadow-lg);border-radius:2px;flex-shrink:0;`
+    // Remove box-shadow from canvas itself (now on wrapper)
+    canvas.style.boxShadow = ''
+    canvas.style.borderRadius = ''
+    pageWrap.appendChild(canvas)
+    pageWrap.appendChild(textLayer)
+
     const wrap = document.createElement('div')
-    wrap.style.cssText = 'padding:20px 24px 32px;'
-    wrap.appendChild(canvas)
+    wrap.style.cssText = 'padding:20px 24px 32px;display:flex;justify-content:center;'
+    wrap.appendChild(pageWrap)
     content.appendChild(wrap)
   }
 
