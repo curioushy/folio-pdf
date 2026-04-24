@@ -761,11 +761,11 @@ async function openGlobalFile(file) {
 const NAV_EXPAND_KEY = 'folio-nav-expanded'
 
 function loadExpanded() {
-  try { return new Set(JSON.parse(localStorage.getItem(NAV_EXPAND_KEY) || '[]')) }
+  try { return new Set(JSON.parse(sessionStorage.getItem(NAV_EXPAND_KEY) || '[]')) }
   catch { return new Set() }
 }
 function saveExpanded(set) {
-  try { localStorage.setItem(NAV_EXPAND_KEY, JSON.stringify([...set])) } catch {}
+  try { sessionStorage.setItem(NAV_EXPAND_KEY, JSON.stringify([...set])) } catch {}
 }
 
 function renderNav() {

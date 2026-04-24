@@ -17,7 +17,7 @@ import { registerFeature } from '../core/registry.js'
 import { readFile, saveAs } from '../core/fs.js'
 import * as pdf from '../core/pdf.js'
 import { loadForRender, renderToUnencryptedPdf } from '../core/renderer.js'
-import { toast, showProgress, updateProgress, hideProgress, promptPassword } from '../core/ui.js'
+import { toast, showProgress, updateProgress, hideProgress, promptPassword, confirm } from '../core/ui.js'
 import { get }                                                               from '../core/state.js'
 
 registerFeature({
@@ -28,6 +28,21 @@ registerFeature({
   description: 'Add or remove password protection on a PDF',
 
   render(container) {
+    const gf = get().currentFile
+
+    if (!gf) {
+      container.innerHTML = `
+        <div class="feature-header">
+          <h2>Password Protection</h2>
+          <p class="feature-desc">Add a password to lock a PDF, or remove an existing one.</p>
+        </div>
+        <div class="no-file-nudge">
+          <span class="no-file-icon">🔒</span>
+          <p>Open a PDF from the sidebar to get started.</p>
+        </div>`
+      return
+    }
+
     container.innerHTML = `
       <div class="feature-header">
         <h2>Password Protection</h2>
@@ -38,18 +53,11 @@ registerFeature({
         <div class="tab-group">
           <button class="tab active" data-tab="protect">Protect</button>
           <button class="tab"        data-tab="remove">Remove password</button>
+          <button class="tab"        data-tab="unlock">Unlock</button>
         </div>
 
         <!-- ── Protect tab ── -->
         <div id="tab-protect" class="tab-content">
-          <div class="section-label">Select PDF</div>
-          <div class="file-drop-zone" id="protect-drop">
-            Drag a PDF here, or
-            <button class="btn btn-sm" id="protect-browse">Browse</button>
-            <input type="file" id="protect-input" accept=".pdf" hidden>
-          </div>
-          <div id="protect-filename" class="file-name-display"></div>
-
           <div class="section-label">Passwords</div>
           <div class="option-row">
             <label>User password <small>(to open)</small></label>
@@ -68,20 +76,12 @@ registerFeature({
           <label class="option-row"><input type="checkbox" id="perm-forms"  checked> Allow filling forms</label>
 
           <div class="action-bar">
-            <button class="btn btn-primary btn-lg" id="protect-run" disabled>Protect PDF</button>
+            <button class="btn btn-primary btn-lg" id="protect-run">Protect PDF</button>
           </div>
         </div>
 
         <!-- ── Remove tab ── -->
         <div id="tab-remove" class="tab-content hidden">
-          <div class="section-label">Select password-protected PDF</div>
-          <div class="file-drop-zone" id="remove-drop">
-            Drag a PDF here, or
-            <button class="btn btn-sm" id="remove-browse">Browse</button>
-            <input type="file" id="remove-input" accept=".pdf" hidden>
-          </div>
-          <div id="remove-filename" class="file-name-display"></div>
-
           <div class="section-label">Current password</div>
           <div class="option-row">
             <label>Password</label>
@@ -97,7 +97,23 @@ registerFeature({
           </div>
 
           <div class="action-bar">
-            <button class="btn btn-primary btn-lg" id="remove-run" disabled>Remove password</button>
+            <button class="btn btn-primary btn-lg" id="remove-run">Remove password</button>
+          </div>
+        </div>
+
+        <!-- ── Unlock tab ── -->
+        <div id="tab-unlock" class="tab-content hidden">
+          <div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 14px;margin:14px 0;font-size:13px;color:var(--text-muted);line-height:1.6;">
+            <strong style="color:var(--text);">What this does</strong><br>
+            Re-saves the PDF without its permission flags. The output has the same
+            pages, text, images and bookmarks — just no "locked" behavior in Acrobat
+            or browser viewers.
+            <br><br>
+            <strong style="color:var(--text);">If the PDF has a user password</strong><br>
+            You'll be asked to enter it. Only PDFs you have the right to open.
+          </div>
+          <div class="action-bar">
+            <button class="btn btn-primary btn-lg" id="unlock-run">Unlock PDF</button>
           </div>
         </div>
       </div>
@@ -113,31 +129,9 @@ registerFeature({
       })
     })
 
-    // ── Shared drop zone helper ───────────────────────────────────────────────
-    function setupDropZone(dropId, inputId, filenameId, runBtnId, onFile) {
-      const dropZone = container.querySelector(`#${dropId}`)
-      const input    = container.querySelector(`#${inputId}`)
-      const nameEl   = container.querySelector(`#${filenameId}`)
-      const runBtn   = container.querySelector(`#${runBtnId}`)
-
-      const setFile = file => { onFile(file); nameEl.textContent = file.name; runBtn.disabled = false }
-
-      dropZone.addEventListener('dragover',  e => { e.preventDefault(); dropZone.classList.add('drag-over') })
-      dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'))
-      dropZone.addEventListener('drop', e => {
-        e.preventDefault(); dropZone.classList.remove('drag-over')
-        const f = Array.from(e.dataTransfer.files).find(f => f.name.toLowerCase().endsWith('.pdf'))
-        if (f) setFile(f)
-      })
-      dropZone.querySelector('button').addEventListener('click', () => input.click())
-      input.addEventListener('change', e => { if (e.target.files[0]) setFile(e.target.files[0]); input.value = '' })
-    }
-
     // ── Protect tab ──────────────────────────────────────────────────────────
-    let protectFile = null
-    let protectPwd  = null
-    setupDropZone('protect-drop', 'protect-input', 'protect-filename', 'protect-run',
-      f => { protectFile = f; protectPwd = null })
+    let protectFile = gf.file
+    let protectPwd  = gf.pwd
 
     container.querySelector('#protect-run').addEventListener('click', async () => {
       const userPwd  = container.querySelector('#protect-user-pwd').value
@@ -210,22 +204,9 @@ registerFeature({
       return pdf.load(imageBytes)
     }
 
-    // ── Auto-load from global file state ──────────────────────────────────
-    const gf = get().currentFile
-    if (gf) {
-      setTimeout(() => {
-        protectFile = gf.file
-        protectPwd  = gf.pwd
-        container.querySelector('#protect-filename').textContent = gf.file.name
-        container.querySelector('#protect-run').disabled = false
-      }, 0)
-    }
-
     // ── Remove tab ───────────────────────────────────────────────────────────
-    // Uses PDF.js for decryption since pdf-lib v1.x cannot decrypt any PDF.
-    let removeFile = null
-    setupDropZone('remove-drop', 'remove-input', 'remove-filename', 'remove-run',
-      f => { removeFile = f })
+    let removeFile = gf.file
+    if (gf.pwd) container.querySelector('#remove-pwd').value = gf.pwd
 
     container.querySelector('#remove-run').addEventListener('click', async () => {
       const password = container.querySelector('#remove-pwd').value
@@ -279,6 +260,95 @@ registerFeature({
         toast(`Password removed → ${outName} (${total} pages, image-based fallback)`, 'success', 5000)
       } catch (err) {
         if (err.name !== 'AbortError') toast('Failed: ' + err.message, 'error')
+      } finally {
+        hideProgress()
+      }
+    })
+
+    // ── Unlock tab ───────────────────────────────────────────────────────────
+    container.querySelector('#unlock-run').addEventListener('click', async () => {
+      const cf = get().currentFile
+      if (!cf) return
+      const srcFile = cf.file
+      let srcPwd = cf.pwd
+
+      showProgress('Loading PDF…')
+      try {
+        const bytes = await readFile(srcFile)
+        let doc
+        try {
+          doc = await pdf.load(bytes, srcPwd || undefined)
+        } catch (err) {
+          if (err.code !== 'ENCRYPTED') throw err
+          hideProgress()
+          const pwd = await promptPassword(srcFile.name)
+
+          if (!pwd) {
+            const proceed = await confirm(
+              'No password provided. Create a rasterized (image-based) copy instead? ' +
+              'This works for PDFs that open without a password but have print/copy ' +
+              'restrictions. Text in the output will not be selectable.',
+              'Use Rasterized Version?'
+            )
+            if (!proceed) return
+            showProgress('Opening PDF…')
+            let renderDoc
+            try {
+              renderDoc = await loadForRender(bytes)
+            } catch (errR) {
+              if (errR.code === 'ENCRYPTED' || errR.code === 'WRONG_PASSWORD') {
+                toast('This PDF needs a password to open — cannot create a rasterized copy.', 'error', 5000)
+                return
+              }
+              throw errR
+            }
+            const total = renderDoc.numPages
+            const outBytes = await renderToUnencryptedPdf(renderDoc, {
+              onProgress: (n, t) => updateProgress(`Rendering page ${n} of ${t}…`),
+            })
+            renderDoc.destroy()
+            const outName = srcFile.name.replace(/\.pdf$/i, '_unlocked.pdf')
+            await saveAs(outBytes, outName)
+            toast(`Unlocked → ${outName} (${total} pages, image-based — text may not be selectable)`, 'success', 5000)
+            return
+          }
+
+          srcPwd = pwd
+          showProgress('Decrypting…')
+          try {
+            doc = await pdf.load(bytes, pwd)
+          } catch (err2) {
+            if (err2.code !== 'WRONG_PASSWORD') throw err2
+            updateProgress('Trying fallback renderer…')
+            let renderDoc
+            try {
+              renderDoc = await loadForRender(bytes, pwd)
+            } catch (err3) {
+              if (err3.code === 'WRONG_PASSWORD') {
+                toast('Wrong password — could not decrypt the PDF.', 'error')
+                return
+              }
+              throw err3
+            }
+            const total = renderDoc.numPages
+            const outBytes = await renderToUnencryptedPdf(renderDoc, {
+              onProgress: (n, t) => updateProgress(`Rendering page ${n} of ${t}…`),
+            })
+            renderDoc.destroy()
+            const outName = srcFile.name.replace(/\.pdf$/i, '_unlocked.pdf')
+            await saveAs(outBytes, outName)
+            toast(`Unlocked → ${outName} (${total} pages, image-based fallback — text may not be selectable)`, 'success', 5000)
+            return
+          }
+        }
+
+        updateProgress('Saving unlocked PDF…')
+        const outBytes = await pdf.save(doc)
+        const outName  = srcFile.name.replace(/\.pdf$/i, '_unlocked.pdf')
+        await saveAs(outBytes, outName)
+        toast(`Unlocked → ${outName} (${doc.getPageCount()} page${doc.getPageCount() > 1 ? 's' : ''})`, 'success')
+      } catch (err) {
+        if (err.name !== 'AbortError') { console.error(err); toast('Failed: ' + err.message, 'error') }
       } finally {
         hideProgress()
       }

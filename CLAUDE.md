@@ -78,7 +78,7 @@ Pages      → organise, split, crop, n-up, poster
 Stamp      → watermark, header-footer
 Protect    → password, unlock, sign, redact
 Extract    → extract-text, extract-images, fill-forms, table-csv
-Convert    → compress, flatten, pdf-to-images, repair, normalise-pages, strip-elements
+Convert    → compress, flatten, pdf-to-images, repair, normalise-pages, strip-elements, grayscale, ocr
 Tools      → bookmarks, dark-reader, metadata
 Multi-file → merge, overlay, images-to-pdf, pdf-compare, batch
 ```

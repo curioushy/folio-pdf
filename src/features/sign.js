@@ -28,6 +28,21 @@ registerFeature({
   description: 'Draw or upload a signature and stamp it onto PDF pages',
 
   render(container) {
+    const gf = get().currentFile
+
+    if (!gf) {
+      container.innerHTML = `
+        <div class="feature-header">
+          <h2>Sign PDF</h2>
+          <p class="feature-desc">Draw a signature or upload an image, then place it on any page.</p>
+        </div>
+        <div class="no-file-nudge">
+          <span class="no-file-icon">✍</span>
+          <p>Open a PDF from the sidebar to get started.</p>
+        </div>`
+      return
+    }
+
     container.innerHTML = `
       <div class="feature-header">
         <h2>Sign PDF</h2>
@@ -41,12 +56,7 @@ registerFeature({
         <!-- ── Left: source + signature ─────────────────────────────────── -->
         <div class="panel">
           <div class="panel-header"><span class="panel-title">① Source PDF</span></div>
-          <div class="file-drop-zone" id="sg-drop">
-            <span>Drag a PDF here, or</span>
-            <button class="btn btn-sm" id="sg-browse">Browse</button>
-            <input type="file" id="sg-input" accept=".pdf" hidden>
-          </div>
-          <div id="sg-filename" class="file-name-display"></div>
+          <div id="sg-filename" class="file-name-display">${gf.name}</div>
           <div id="sg-info" class="status-text" style="margin-top:4px;"></div>
 
           <div class="section-label" style="margin-top:16px;">② Signature</div>
@@ -270,12 +280,9 @@ registerFeature({
         e.target.value === 'custom' ? 'flex' : 'none'
     })
 
-    // ── PDF drop zone ─────────────────────────────────────────────────────────
-    const dropZone = container.querySelector('#sg-drop')
-    const input    = container.querySelector('#sg-input')
-    const nameEl   = container.querySelector('#sg-filename')
-    const infoEl   = container.querySelector('#sg-info')
-    const runBtn   = container.querySelector('#sg-run')
+    const nameEl = container.querySelector('#sg-filename')
+    const infoEl = container.querySelector('#sg-info')
+    const runBtn = container.querySelector('#sg-run')
 
     async function loadFile(file, initialPwd = null) {
       srcFile = file
@@ -303,21 +310,7 @@ registerFeature({
       }
     }
 
-    dropZone.addEventListener('dragover',  e => { e.preventDefault(); dropZone.classList.add('drag-over') })
-    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'))
-    dropZone.addEventListener('drop', e => {
-      e.preventDefault(); dropZone.classList.remove('drag-over')
-      const f = [...e.dataTransfer.files].find(f => f.name.toLowerCase().endsWith('.pdf'))
-      if (f) loadFile(f)
-    })
-    container.querySelector('#sg-browse').addEventListener('click', () => input.click())
-    input.addEventListener('change', e => {
-      if (e.target.files[0]) { loadFile(e.target.files[0]); input.value = '' }
-    })
-
-    // ── Auto-load from global file state ──────────────────────────────────
-    const gf = get().currentFile
-    if (gf) setTimeout(() => loadFile(gf.file, gf.pwd), 0)
+    setTimeout(() => loadFile(gf.file, gf.pwd), 0)
 
     // ── Capture signature bytes ───────────────────────────────────────────────
     async function captureSig() {

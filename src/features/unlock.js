@@ -15,7 +15,7 @@ import { registerFeature }                                          from '../cor
 import { readFile, saveAs }                                         from '../core/fs.js'
 import * as pdf                                                     from '../core/pdf.js'
 import { loadForRender, renderToUnencryptedPdf }                    from '../core/renderer.js'
-import { toast, showProgress, updateProgress, hideProgress, promptPassword } from '../core/ui.js'
+import { toast, showProgress, updateProgress, hideProgress, promptPassword, confirm } from '../core/ui.js'
 import { get }                                                               from '../core/state.js'
 
 registerFeature({
@@ -26,6 +26,25 @@ registerFeature({
   description: 'Remove printing/copying restrictions from a PDF',
 
   render(container) {
+    const gf = get().currentFile
+
+    if (!gf) {
+      container.innerHTML = `
+        <div class="feature-header">
+          <h2>Unlock PDF</h2>
+          <p class="feature-desc">
+            Remove "no printing", "no copying", "no modifying" and other owner-password
+            restrictions. Produces a clean, unrestricted copy you can print or edit
+            normally in any PDF viewer.
+          </p>
+        </div>
+        <div class="no-file-nudge">
+          <span class="no-file-icon">🔓</span>
+          <p>Open a PDF from the sidebar to get started.</p>
+        </div>`
+      return
+    }
+
     container.innerHTML = `
       <div class="feature-header">
         <h2>Unlock PDF</h2>
@@ -38,14 +57,6 @@ registerFeature({
 
       <div class="panel">
 
-        <div class="section-label">Select PDF</div>
-        <div class="file-drop-zone" id="unlock-drop">
-          Drag a PDF here, or
-          <button class="btn btn-sm" id="unlock-browse">Browse</button>
-          <input type="file" id="unlock-input" accept=".pdf" hidden>
-        </div>
-        <div id="unlock-filename" class="file-name-display"></div>
-
         <div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 14px;margin:14px 0;font-size:13px;color:var(--text-muted);line-height:1.6;">
           <strong style="color:var(--text);">What this does</strong><br>
           Re-saves the PDF without its permission flags. The output has the same
@@ -57,42 +68,15 @@ registerFeature({
         </div>
 
         <div class="action-bar">
-          <button class="btn btn-primary btn-lg" id="unlock-run" disabled>Unlock PDF</button>
+          <button class="btn btn-primary btn-lg" id="unlock-run">Unlock PDF</button>
         </div>
 
       </div>
     `
 
-    // ── Drop zone ─────────────────────────────────────────────────────────────
-    let srcFile = null
-    let srcPwd  = null
-    const dropZone = container.querySelector('#unlock-drop')
-    const input    = container.querySelector('#unlock-input')
-    const nameEl   = container.querySelector('#unlock-filename')
-    const runBtn   = container.querySelector('#unlock-run')
-
-    const setFile = file => {
-      srcFile = file
-      nameEl.textContent = file.name
-      runBtn.disabled    = false
-    }
-
-    dropZone.addEventListener('dragover',  e => { e.preventDefault(); dropZone.classList.add('drag-over') })
-    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'))
-    dropZone.addEventListener('drop', e => {
-      e.preventDefault(); dropZone.classList.remove('drag-over')
-      const f = Array.from(e.dataTransfer.files).find(f => f.name.toLowerCase().endsWith('.pdf'))
-      if (f) setFile(f)
-    })
-    container.querySelector('#unlock-browse').addEventListener('click', () => input.click())
-    input.addEventListener('change', e => {
-      if (e.target.files[0]) setFile(e.target.files[0])
-      input.value = ''
-    })
-
-    // ── Auto-load from global file state ──────────────────────────────────
-    const gf = get().currentFile
-    if (gf) setTimeout(() => { setFile(gf.file); srcPwd = gf.pwd }, 0)
+    let srcFile = gf.file
+    let srcPwd  = gf.pwd
+    const runBtn = container.querySelector('#unlock-run')
 
     // ── Run ───────────────────────────────────────────────────────────────────
     runBtn.addEventListener('click', async () => {
@@ -113,7 +97,45 @@ registerFeature({
           // PDF has a user password — ask for it
           hideProgress()
           const pwd = await promptPassword(srcFile.name)
-          if (!pwd) return
+
+          if (!pwd) {
+            // User cancelled — offer rasterized fallback. Works for owner-restricted
+            // PDFs (empty user password) since PDF.js opens them without any prompt.
+            const proceed = await confirm(
+              'No password provided. Create a rasterized (image-based) copy instead? ' +
+              'This works for PDFs that open without a password but have print/copy ' +
+              'restrictions. Text in the output will not be selectable.',
+              'Use Rasterized Version?'
+            )
+            if (!proceed) return
+
+            showProgress('Opening PDF…')
+            let renderDoc
+            try {
+              renderDoc = await loadForRender(bytes)
+            } catch (errR) {
+              if (errR.code === 'ENCRYPTED' || errR.code === 'WRONG_PASSWORD') {
+                toast('This PDF needs a password to open — cannot create a rasterized copy.', 'error', 5000)
+                return
+              }
+              throw errR
+            }
+
+            const total = renderDoc.numPages
+            const outBytes = await renderToUnencryptedPdf(renderDoc, {
+              onProgress: (n, t) => updateProgress(`Rendering page ${n} of ${t}…`),
+            })
+            renderDoc.destroy()
+
+            const outName = srcFile.name.replace(/\.pdf$/i, '_unlocked.pdf')
+            await saveAs(outBytes, outName)
+            toast(
+              `Unlocked → ${outName} (${total} pages, image-based — text may not be selectable)`,
+              'success', 5000
+            )
+            return
+          }
+
           srcPwd = pwd
 
           showProgress('Decrypting…')

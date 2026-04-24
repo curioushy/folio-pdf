@@ -109,6 +109,15 @@ body {
   color: var(--sidebar-text);
   font-style: italic;
 }
+.sidebar-ocr-link {
+  font-size: 11px;
+  color: var(--sidebar-text-bright);
+  text-decoration: none;
+  opacity: .7;
+  transition: opacity var(--transition);
+  margin-bottom: 4px;
+}
+.sidebar-ocr-link:hover { opacity: 1; }
 
 /* ── Feature nav ──────────────────────────────────────────────────────────── */
 .feature-nav {

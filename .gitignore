@@ -2,3 +2,10 @@ node_modules/
 dist/
 .DS_Store
 Thumbs.db
+
+.claude/
+
+# OCR vendor assets — ~17 MB of WASM + language model.
+# Kept as a sibling copy at ../folio-ocr; build.js copies what it needs into dist/
+# when the folder is present. Feature degrades gracefully when missing.
+folio-ocr/

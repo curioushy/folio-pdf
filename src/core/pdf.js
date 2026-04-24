@@ -16,10 +16,12 @@ import {
   PDFDocument,
   EncryptedPDFError,
   PDFName,
+  PDFNumber,
   PDFString,
   PDFArray,
   PDFNull,
   PDFBool,
+  PDFRawStream,
   ViewerPreferences,
   rgb,
   degrees,
@@ -565,6 +567,115 @@ export async function addPageNumbers(doc, {
     page.drawText(text, { x, y, size: fontSize, font, color: rgb(r, g, b) })
     counter++
   }
+}
+
+// ── Surgical image compression ───────────────────────────────────────────────
+
+/**
+ * Walk every indirect object, find /XObject /Subtype /Image streams whose filter
+ * is a single /DCTDecode (plain JPEG), decode → downsample via canvas → re-encode
+ * as JPEG → swap the stream in place. Text, vectors, links, annotations untouched.
+ *
+ * Scope (v1, deliberately narrow):
+ *   - /Filter /DCTDecode only (single filter). Flate/LZW pixel streams skipped.
+ *   - /ColorSpace /DeviceRGB, /BitsPerComponent 8. CMYK/gray/ICC skipped.
+ *   - No SMask / Mask. Alpha-masked images skipped (dimensions must match mask).
+ *   - Tiny images (< 200px on both sides) skipped — no savings to be had.
+ *   - If re-encoded JPEG is not smaller than the original, the image is left alone.
+ *
+ * @param {PDFDocument} doc
+ * @param {{ maxPixels?: number, quality?: number, onProgress?: (n, total) => void }} [opts]
+ * @returns {Promise<{ scanned: number, compressed: number, savedBytes: number }>}
+ */
+export async function compressImages(doc, {
+  maxPixels  = 1800,
+  quality    = 0.75,
+  onProgress = null,
+} = {}) {
+  const ctx        = doc.context
+  const candidates = []
+
+  const NAME_Type    = PDFName.of('Type')
+  const NAME_Subtype = PDFName.of('Subtype')
+  const NAME_Filter  = PDFName.of('Filter')
+  const NAME_SMask   = PDFName.of('SMask')
+  const NAME_Mask    = PDFName.of('Mask')
+  const NAME_BPC     = PDFName.of('BitsPerComponent')
+  const NAME_CS      = PDFName.of('ColorSpace')
+  const NAME_W       = PDFName.of('Width')
+  const NAME_H       = PDFName.of('Height')
+  const NAME_XObject = PDFName.of('XObject')
+  const NAME_Image   = PDFName.of('Image')
+  const NAME_DCT     = PDFName.of('DCTDecode')
+  const NAME_RGB     = PDFName.of('DeviceRGB')
+
+  for (const [, obj] of ctx.enumerateIndirectObjects()) {
+    if (!(obj instanceof PDFRawStream)) continue
+    const dict = obj.dict
+
+    if (dict.get(NAME_Subtype) !== NAME_Image)                             continue
+    const t = dict.get(NAME_Type)
+    if (t && t !== NAME_XObject)                                           continue
+
+    const filter = dict.get(NAME_Filter)
+    if (!(filter instanceof PDFName) || filter !== NAME_DCT)               continue
+
+    if (dict.has(NAME_SMask) || dict.has(NAME_Mask))                       continue
+
+    const bpc = dict.get(NAME_BPC)
+    if (!(bpc instanceof PDFNumber) || bpc.asNumber() !== 8)               continue
+
+    let cs = dict.get(NAME_CS)
+    if (cs && !(cs instanceof PDFName)) cs = ctx.lookup(cs)
+    if (!(cs instanceof PDFName) || cs !== NAME_RGB)                       continue
+
+    const wObj = dict.get(NAME_W), hObj = dict.get(NAME_H)
+    if (!(wObj instanceof PDFNumber) || !(hObj instanceof PDFNumber))      continue
+    const w = wObj.asNumber(), h = hObj.asNumber()
+    if (Math.max(w, h) < 200)                                              continue
+
+    candidates.push({ stream: obj, dict, w, h })
+  }
+
+  let compressed = 0
+  let savedBytes = 0
+
+  for (let i = 0; i < candidates.length; i++) {
+    onProgress?.(i, candidates.length)
+    const { stream, dict } = candidates[i]
+    const orig = stream.getContents()
+
+    let bitmap
+    try {
+      bitmap = await createImageBitmap(new Blob([orig], { type: 'image/jpeg' }))
+    } catch { continue }
+
+    const maxDim = Math.max(bitmap.width, bitmap.height)
+    const scale  = maxDim > maxPixels ? maxPixels / maxDim : 1
+    const newW   = Math.max(1, Math.round(bitmap.width  * scale))
+    const newH   = Math.max(1, Math.round(bitmap.height * scale))
+
+    const canvas  = document.createElement('canvas')
+    canvas.width  = newW
+    canvas.height = newH
+    canvas.getContext('2d').drawImage(bitmap, 0, 0, newW, newH)
+    bitmap.close?.()
+
+    const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', quality))
+    if (!blob) continue
+    const next = new Uint8Array(await blob.arrayBuffer())
+    if (next.length >= orig.length) continue
+
+    stream.updateContents(next)
+    dict.set(NAME_W, PDFNumber.of(newW))
+    dict.set(NAME_H, PDFNumber.of(newH))
+
+    savedBytes += orig.length - next.length
+    compressed++
+  }
+
+  onProgress?.(candidates.length, candidates.length)
+  return { scanned: candidates.length, compressed, savedBytes }
 }
 
 // ── Images → PDF ──────────────────────────────────────────────────────────────

@@ -79,11 +79,12 @@ async function build() {
   html = html.replace(/\{\{VERSION\}\}/g, VERSION)
 
   // ── 4. Write output ───────────────────────────────────────────────────────
-  const outPath = 'dist/folio.html'
+  const outPath = 'dist/Folio-PDF.html'
   writeFileSync(outPath, html)
   writeFileSync('dist/index.html', html)   // Vercel serves this as site root
   const sizeKB = (readFileSync(outPath).length / 1024).toFixed(1)
-  console.log(`\n  ✓ Built: ${outPath} (${sizeKB} KB total)\n`)
+  console.log(`\n  ✓ Built: ${outPath} (${sizeKB} KB total)`)
+  console.log()
 }
 
 build().catch(err => {

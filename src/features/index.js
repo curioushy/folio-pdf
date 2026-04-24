@@ -24,7 +24,6 @@ import './header-footer.js'
 
 // ── Protect ────────────────────────────────────────────────────────────────
 import './password.js'
-import './unlock.js'
 import './sign.js'
 import './redact.js'
 

@@ -21,7 +21,7 @@ import { execSync }                 from 'child_process'
 const LAYOUT = {
   'Pages':       ['organise', 'split', 'crop', 'n-up', 'poster', 'page-labels'],
   'Stamp':       ['watermark', 'header-footer'],
-  'Protect':     ['password', 'unlock', 'sign', 'redact'],
+  'Protect':     ['password', 'sign', 'redact'],
   'Extract':     ['extract-text', 'extract-images', 'fill-forms', 'table-csv', 'extract-annotations'],
   'Convert':     ['compress', 'flatten', 'pdf-to-images', 'repair', 'normalise-pages', 'strip-elements', 'grayscale'],
   'Tools':       ['bookmarks', 'dark-reader', 'metadata', 'search', 'doc-stats'],
@@ -108,7 +108,7 @@ try {
   execSync('node build.js', { stdio: 'pipe' })
   ok('build completes without error')
 
-  const html = readFileSync('dist/folio.html', 'utf8')
+  const html = readFileSync('dist/Folio-PDF.html', 'utf8')
   const pkg  = JSON.parse(readFileSync('package.json', 'utf8'))
 
   check('version stamp present',           html.includes(`v${pkg.version}`))

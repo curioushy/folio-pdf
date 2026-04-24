@@ -1,11 +1,12 @@
 {
   "name": "folio",
-  "version": "0.3.20",
+  "version": "0.3.34",
+  "ocr-version": "1.4.3",
   "type": "module",
   "scripts": {
-    "dev": "vite src --open",
+    "dev": "vite --open",
     "build": "node build.js",
-    "preview": "node -e \"const{exec}=require('child_process');exec('start dist/folio.html')\""
+    "preview": "node serve.js"
   },
   "dependencies": {
     "@cantoo/pdf-lib": "^2.6.5",

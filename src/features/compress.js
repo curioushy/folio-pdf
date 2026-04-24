@@ -1,35 +1,44 @@
 /**
- * Compress feature — reduce PDF file size by re-rendering pages at lower resolution.
- * Output is image-based (not text-selectable) — same as "Print to PDF" at lower quality.
+ * Compress feature — two methods:
+ *
+ *   Surgical  (default) — walks the object graph, downsamples image XObjects
+ *                         in place. Text, vectors, links, annotations preserved.
+ *                         Only effective when images dominate the file size.
+ *
+ *   Rasterise           — re-renders every page to JPEG. Maximum shrink on mixed
+ *                         content, but the output has no selectable text and no
+ *                         vector graphics or hyperlinks.
  */
 
 import { registerFeature }                                         from '../core/registry.js'
 import { readFile, saveAs }                                        from '../core/fs.js'
+import * as pdf                                                    from '../core/pdf.js'
 import * as renderer                                               from '../core/renderer.js'
 import { toast, showProgress, updateProgress, hideProgress, promptPassword } from '../core/ui.js'
 import { stripExt, ensurePdf }                                     from '../core/utils.js'
 import { get }                                                     from '../core/state.js'
 
-// scale = target-dpi / 72 (PDF points per inch)
+// Presets carry params for BOTH methods so a single radio controls quality
+// regardless of method.
 const PRESETS = {
   screen: {
     label: 'Screen / Email',
-    desc:  '~72 dpi · smallest file, screen viewing only',
-    scale: 1.0,
-    quality: 0.72,
+    desc:  'Smallest file · on-screen viewing',
+    surgical: { maxPixels: 1000, quality: 0.65 },
+    raster:   { scale: 1.0,     quality: 0.72 },
   },
   office: {
     label: 'Office',
     badge: 'Recommended',
-    desc:  '~120 dpi · good for most office use',
-    scale: 1.67,
-    quality: 0.82,
+    desc:  'Balanced size and quality',
+    surgical: { maxPixels: 1600, quality: 0.78 },
+    raster:   { scale: 1.67,    quality: 0.82 },
   },
   print: {
     label: 'Print',
-    desc:  '~150 dpi · suitable for printing',
-    scale: 2.08,
-    quality: 0.88,
+    desc:  'Light compression, near-original quality',
+    surgical: { maxPixels: 2400, quality: 0.88 },
+    raster:   { scale: 2.08,    quality: 0.88 },
   },
 }
 
@@ -38,77 +47,92 @@ registerFeature({
   name:        'Compress',
   category:    'Convert',
   icon:        '⊛',
-  description: 'Reduce file size by re-rendering pages at lower resolution',
+  description: 'Reduce file size by shrinking embedded images',
 
   render(container) {
+    const gf = get().currentFile
+
+    if (!gf) {
+      container.innerHTML = `
+        <div class="feature-header">
+          <h2>Compress PDF</h2>
+          <p class="feature-desc">Reduce file size by shrinking embedded images.</p>
+        </div>
+        <div class="no-file-nudge">
+          <span class="no-file-icon">📄</span>
+          <p>Open a PDF from the sidebar to get started.</p>
+        </div>`
+      return
+    }
+
     container.innerHTML = `
       <div class="feature-header">
         <h2>Compress PDF</h2>
-        <p class="feature-desc">
-          Reduce file size by re-rendering pages as images at lower resolution.
-          Output will not have selectable text.
-        </p>
+        <p class="feature-desc">Shrink embedded images to reduce file size.</p>
       </div>
 
       <div class="feature-split">
 
-        <!-- ── Source + Quality ─────────────────────────────────────────── -->
         <div class="panel">
-          <div class="panel-header"><span class="panel-title">① Source PDF</span></div>
+          <div class="panel-header"><span class="panel-title">① Method</span></div>
 
-          <div class="file-drop-zone" id="cmp-drop">
-            <span>Drag a PDF here, or</span>
-            <button class="btn btn-sm" id="cmp-browse">Browse</button>
-            <input type="file" id="cmp-input" accept=".pdf" hidden>
-          </div>
-          <div id="cmp-filename" class="file-name-display"></div>
-          <div id="cmp-size-info" class="status-text" style="margin-bottom:10px;"></div>
-
-          <div class="section-label">Quality preset</div>
           <div class="cmp-presets">
             <label class="cmp-preset">
-              <input type="radio" name="cmp-quality" value="screen">
-              <div class="cmp-preset-body">
-                <span class="cmp-preset-name">Screen / Email</span>
-                <span class="cmp-preset-desc">~72 dpi · smallest file, screen viewing only</span>
-              </div>
-            </label>
-            <label class="cmp-preset">
-              <input type="radio" name="cmp-quality" value="office" checked>
+              <input type="radio" name="cmp-method" value="surgical" checked>
               <div class="cmp-preset-body">
                 <span class="cmp-preset-name">
-                  Office
+                  Surgical
                   <span class="badge badge-blue" style="font-size:10px;padding:1px 5px;">Recommended</span>
                 </span>
-                <span class="cmp-preset-desc">~120 dpi · good for most office use</span>
+                <span class="cmp-preset-desc">Downsamples images in place · text, vectors and links untouched</span>
               </div>
             </label>
             <label class="cmp-preset">
-              <input type="radio" name="cmp-quality" value="print">
+              <input type="radio" name="cmp-method" value="raster">
               <div class="cmp-preset-body">
-                <span class="cmp-preset-name">Print</span>
-                <span class="cmp-preset-desc">~150 dpi · suitable for printing</span>
+                <span class="cmp-preset-name">Rasterise</span>
+                <span class="cmp-preset-desc">Re-renders every page as JPEG · maximum shrink, loses selectable text</span>
               </div>
             </label>
+          </div>
+
+          <div class="section-label" style="margin-top:16px;">Quality preset</div>
+          <div class="cmp-presets">
+            ${Object.entries(PRESETS).map(([k, v]) => `
+              <label class="cmp-preset">
+                <input type="radio" name="cmp-quality" value="${k}" ${k === 'office' ? 'checked' : ''}>
+                <div class="cmp-preset-body">
+                  <span class="cmp-preset-name">
+                    ${v.label}
+                    ${v.badge ? `<span class="badge badge-blue" style="font-size:10px;padding:1px 5px;">${v.badge}</span>` : ''}
+                  </span>
+                  <span class="cmp-preset-desc">${v.desc}</span>
+                </div>
+              </label>
+            `).join('')}
+          </div>
+
+          <div id="cmp-size-info" class="status-text" style="margin-top:12px;">
+            Source size: ${(gf.file.size / 1024).toFixed(0)} KB
           </div>
         </div>
 
-        <!-- ── Output ───────────────────────────────────────────────────── -->
         <div class="panel">
           <div class="panel-header"><span class="panel-title">② Output</span></div>
 
           <div class="option-row" style="flex-direction:column;align-items:flex-start;gap:4px;">
             <label style="min-width:unset;">Output filename</label>
-            <input type="text" id="cmp-output" class="input" placeholder="compressed.pdf">
+            <input type="text" id="cmp-output" class="input"
+              value="${stripExt(gf.name)}_compressed.pdf">
           </div>
 
           <div style="margin-top:20px;">
-            <button class="btn btn-primary btn-lg" id="cmp-run" disabled
+            <button class="btn btn-primary btn-lg" id="cmp-run"
               style="width:100%;justify-content:center;">
               Compress PDF
             </button>
             <div class="status-text" id="cmp-status" style="text-align:center;margin-top:8px;">
-              Load a PDF to get started.
+              Ready.
             </div>
           </div>
 
@@ -117,11 +141,10 @@ registerFeature({
             border-radius:var(--radius-sm);padding:12px;"></div>
 
           <div style="margin-top:20px;padding-top:14px;border-top:1px solid var(--border);">
-            <p style="font-size:12px;color:var(--text-subtle);line-height:1.7;">
-              ℹ Pages are re-rendered as JPEG images, so text is no longer selectable or
-              searchable in the output. For scanned PDFs this has no impact — they are already
-              image-based. If size reduction is important and text searchability is not, this is
-              the fastest approach.
+            <p style="font-size:12px;color:var(--text-subtle);line-height:1.7;" id="cmp-tip">
+              ℹ Surgical keeps your PDF's text, links and vector graphics intact —
+              only embedded JPEG images are downsampled. If you need every last
+              byte (and don't need selectable text), switch to Rasterise.
             </p>
           </div>
         </div>
@@ -129,86 +152,132 @@ registerFeature({
       </div>
     `
 
-    let srcFile = null
-    let srcPwd  = null
-    const runBtn   = container.querySelector('#cmp-run')
-    const statusEl = container.querySelector('#cmp-status')
-    const nameEl   = container.querySelector('#cmp-filename')
-    const sizeEl   = container.querySelector('#cmp-size-info')
-    const resultEl = container.querySelector('#cmp-result')
+    const runBtn    = container.querySelector('#cmp-run')
+    const statusEl  = container.querySelector('#cmp-status')
+    const resultEl  = container.querySelector('#cmp-result')
+    const tipEl     = container.querySelector('#cmp-tip')
 
-    // ── File loading ──────────────────────────────────────────────────────────
-    function setFile(file, pwd = null) {
-      srcFile = file
-      srcPwd  = pwd
-      nameEl.textContent   = file.name
-      sizeEl.textContent   = `Source size: ${(file.size / 1024).toFixed(0)} KB`
-      container.querySelector('#cmp-output').value = stripExt(file.name) + '_compressed.pdf'
-      runBtn.disabled      = false
-      statusEl.textContent = 'Ready.'
-      resultEl.style.display = 'none'
+    const TIPS = {
+      surgical: 'ℹ Surgical keeps your PDF\u2019s text, links and vector graphics intact — only embedded JPEG images are downsampled. If you need every last byte (and don\u2019t need selectable text), switch to Rasterise.',
+      raster:   'ℹ Rasterise re-renders every page as a JPEG image. Output will not have selectable text or working hyperlinks, but file size is typically smallest on mixed content. For scanned PDFs the difference is usually tiny.',
     }
+    container.querySelectorAll('input[name="cmp-method"]').forEach(r =>
+      r.addEventListener('change', () => { tipEl.textContent = TIPS[r.value] })
+    )
 
-    setupDropZone('cmp-drop', 'cmp-input', setFile)
-
-    // ── Auto-load from global file state ──────────────────────────────────
-    const gf = get().currentFile
-    if (gf) setTimeout(() => setFile(gf.file, gf.pwd), 0)
-
-    // ── Run ───────────────────────────────────────────────────────────────────
     runBtn.addEventListener('click', async () => {
-      const preset = PRESETS[container.querySelector('input[name="cmp-quality"]:checked').value]
+      const method  = container.querySelector('input[name="cmp-method"]:checked').value
+      const preset  = PRESETS[container.querySelector('input[name="cmp-quality"]:checked').value]
+      const cf      = get().currentFile
+      if (!cf) return
+
       showProgress('Loading PDF…')
       try {
-        const bytes = await readFile(srcFile)
-        let renderDoc
-        try {
-          renderDoc = await renderer.loadForRender(bytes)
-        } catch (err) {
-          if (err.code !== 'ENCRYPTED') throw err
-          hideProgress()
-          const pwd = await promptPassword(srcFile.name)
-          if (!pwd) return
-          showProgress('Decrypting…')
-          renderDoc = await renderer.loadForRender(bytes, pwd)
+        const bytes = await readFile(cf.file)
+
+        let outBytes
+        if (method === 'surgical') {
+          // Load with pdf-lib, walk XObjects, save.
+          let doc
+          try {
+            doc = await pdf.load(bytes, cf.pwd || undefined)
+          } catch (err) {
+            if (err.code !== 'ENCRYPTED') throw err
+            hideProgress()
+            const pwd = await promptPassword(cf.name)
+            if (!pwd) return
+            showProgress('Decrypting…')
+            doc = await pdf.load(bytes, pwd)
+          }
+
+          updateProgress('Scanning images…')
+          const report = await pdf.compressImages(doc, {
+            maxPixels: preset.surgical.maxPixels,
+            quality:   preset.surgical.quality,
+            onProgress: (n, t) => updateProgress(`Compressing image ${n + 1} of ${t}…`),
+          })
+          updateProgress('Saving…')
+          outBytes = await pdf.save(doc)
+
+          const outName = ensurePdf(
+            container.querySelector('#cmp-output').value.trim() || stripExt(cf.name) + '_compressed'
+          )
+          await saveAs(outBytes, outName)
+
+          const inKB  = (cf.file.size / 1024).toFixed(0)
+          const outKB = (outBytes.byteLength / 1024).toFixed(0)
+          const pct   = Math.round((1 - outBytes.byteLength / cf.file.size) * 100)
+          const note  = pct > 0
+            ? `↓ ${pct}% smaller`
+            : `↑ ${Math.abs(pct)}% larger`
+
+          toast(`Compressed → ${outName}`, 'success')
+          statusEl.textContent = report.compressed === 0
+            ? `Done — no eligible images found.`
+            : `Done — ${report.compressed} of ${report.scanned} images compressed.`
+          resultEl.style.display = 'block'
+          resultEl.innerHTML = `
+            <div class="cmp-result-row"><span>Input</span><strong>${inKB} KB</strong></div>
+            <div class="cmp-result-row"><span>Output</span><strong>${outKB} KB</strong></div>
+            <div class="cmp-result-row">
+              <span>Change</span>
+              <strong style="color:${pct > 0 ? 'var(--green)' : 'var(--amber)'};">${note}</strong>
+            </div>
+            <div class="cmp-result-row"><span>Images touched</span><strong>${report.compressed} / ${report.scanned}</strong></div>
+          `
+          if (report.scanned === 0) {
+            resultEl.innerHTML += `
+              <div style="font-size:12px;color:var(--text-subtle);margin-top:8px;line-height:1.5;">
+                No DeviceRGB JPEG images found. Try the Rasterise method if the file is still too large.
+              </div>`
+          }
+        } else {
+          // Rasterise method — full page re-render via PDF.js.
+          let renderDoc
+          try {
+            renderDoc = await renderer.loadForRender(bytes, cf.pwd || undefined)
+          } catch (err) {
+            if (err.code !== 'ENCRYPTED') throw err
+            hideProgress()
+            const pwd = await promptPassword(cf.name)
+            if (!pwd) return
+            showProgress('Decrypting…')
+            renderDoc = await renderer.loadForRender(bytes, pwd)
+          }
+
+          const total = renderDoc.numPages
+          outBytes = await renderer.renderToUnencryptedPdf(renderDoc, {
+            scale:      preset.raster.scale,
+            quality:    preset.raster.quality,
+            onProgress: (n, t) => updateProgress(`Rasterising page ${n} of ${t}…`),
+          })
+          renderDoc.destroy()
+
+          updateProgress('Saving…')
+          const outName = ensurePdf(
+            container.querySelector('#cmp-output').value.trim() || stripExt(cf.name) + '_compressed'
+          )
+          await saveAs(outBytes, outName)
+
+          const inKB  = (cf.file.size / 1024).toFixed(0)
+          const outKB = (outBytes.byteLength / 1024).toFixed(0)
+          const pct   = Math.round((1 - outBytes.byteLength / cf.file.size) * 100)
+          const note  = pct > 0
+            ? `↓ ${pct}% smaller`
+            : `↑ ${Math.abs(pct)}% larger (source was already well-optimised)`
+
+          toast(`Compressed → ${outName}`, 'success')
+          statusEl.textContent = `Done — ${total} pages, ${note}`
+          resultEl.style.display = 'block'
+          resultEl.innerHTML = `
+            <div class="cmp-result-row"><span>Input</span><strong>${inKB} KB</strong></div>
+            <div class="cmp-result-row"><span>Output</span><strong>${outKB} KB</strong></div>
+            <div class="cmp-result-row">
+              <span>Change</span>
+              <strong style="color:${pct > 0 ? 'var(--green)' : 'var(--amber)'};">${note}</strong>
+            </div>
+          `
         }
-
-        const total    = renderDoc.numPages
-        const outBytes = await renderer.renderToUnencryptedPdf(renderDoc, {
-          scale:      preset.scale,
-          quality:    preset.quality,
-          onProgress: (n, t) => updateProgress(`Compressing page ${n} of ${t}…`),
-        })
-        renderDoc.destroy()
-
-        updateProgress('Saving…')
-        const outName = ensurePdf(
-          container.querySelector('#cmp-output').value.trim() || stripExt(srcFile.name) + '_compressed'
-        )
-        await saveAs(outBytes, outName)
-
-        const inKB  = (srcFile.size / 1024).toFixed(0)
-        const outKB = (outBytes.byteLength / 1024).toFixed(0)
-        const pct   = Math.round((1 - outBytes.byteLength / srcFile.size) * 100)
-        const note  = pct > 0
-          ? `↓ ${pct}% smaller`
-          : `↑ ${Math.abs(pct)}% larger (source was already well-optimised)`
-
-        toast(`Compressed → ${outName}`, 'success')
-        statusEl.textContent = `Done — ${total} pages, ${note}`
-        resultEl.style.display = 'block'
-        resultEl.innerHTML = `
-          <div class="cmp-result-row">
-            <span>Input</span><strong>${inKB} KB</strong>
-          </div>
-          <div class="cmp-result-row">
-            <span>Output</span><strong>${outKB} KB</strong>
-          </div>
-          <div class="cmp-result-row">
-            <span>Change</span>
-            <strong style="color:${pct > 0 ? 'var(--green)' : 'var(--amber)'};">${note}</strong>
-          </div>
-        `
       } catch (err) {
         if (err.name !== 'AbortError') {
           console.error(err)
@@ -218,22 +287,5 @@ registerFeature({
         hideProgress()
       }
     })
-
-    // ── Drop zone helper ─────────────────────────────────────────────────────
-    function setupDropZone(dropId, inputId, onFile) {
-      const zone  = container.querySelector(`#${dropId}`)
-      const input = container.querySelector(`#${inputId}`)
-      zone.addEventListener('dragover',  e => { e.preventDefault(); zone.classList.add('drag-over') })
-      zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'))
-      zone.addEventListener('drop', e => {
-        e.preventDefault(); zone.classList.remove('drag-over')
-        const f = [...e.dataTransfer.files].find(f => f.name.toLowerCase().endsWith('.pdf'))
-        if (f) onFile(f)
-      })
-      zone.querySelector('button').addEventListener('click', () => input.click())
-      input.addEventListener('change', e => {
-        if (e.target.files[0]) { onFile(e.target.files[0]); input.value = '' }
-      })
-    }
   },
 })
